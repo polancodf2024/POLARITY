@@ -1,0 +1,5 @@
+[server]
+enableXsrfProtection = true  # Protección XSRF para peticiones de usuario
+
+[client]
+hideMenuItems = true         # Oculta el menú de ajustes
