@@ -1,28 +1,24 @@
-import os
-from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import paramiko
-
-# Cargar las variables de entorno
-load_dotenv()
+import os
 
 # Email Configuration
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL")
+SMTP_SERVER = st.secrets["SMTP_SERVER"]
+SMTP_PORT = int(st.secrets["SMTP_PORT"])
+EMAIL_USER = st.secrets["EMAIL_USER"]
+EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
+NOTIFICATION_EMAIL = st.secrets["NOTIFICATION_EMAIL"]
 
 # Remote server configuration
-REMOTE_HOST = os.getenv("REMOTE_HOST")
-REMOTE_USER = os.getenv("REMOTE_USER")
-REMOTE_PASSWORD = os.getenv("REMOTE_PASSWORD")
-REMOTE_PORT = int(os.getenv("REMOTE_PORT", 22))
-REMOTE_DIR = os.getenv("REMOTE_DIR")
+REMOTE_HOST = st.secrets["REMOTE_HOST"]
+REMOTE_USER = st.secrets["REMOTE_USER"]
+REMOTE_PASSWORD = st.secrets["REMOTE_PASSWORD"]
+REMOTE_PORT = int(st.secrets["REMOTE_PORT"])
+REMOTE_DIR = st.secrets["REMOTE_DIR"]
 REMOTE_FILE = "muestra.fasta"
 LOCAL_FILE = "muestra.fasta"
 
