@@ -5,22 +5,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import paramiko
 import os
-
-# Email Configuration
-SMTP_SERVER = st.secrets["SMTP_SERVER"]
-SMTP_PORT = int(st.secrets["SMTP_PORT"])
-EMAIL_USER = st.secrets["EMAIL_USER"]
-EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
-NOTIFICATION_EMAIL = st.secrets["NOTIFICATION_EMAIL"]
-
-# Remote server configuration
-REMOTE_HOST = st.secrets["REMOTE_HOST"]
-REMOTE_USER = st.secrets["REMOTE_USER"]
-REMOTE_PASSWORD = st.secrets["REMOTE_PASSWORD"]
-REMOTE_PORT = int(st.secrets["REMOTE_PORT"])
-REMOTE_DIR = st.secrets["REMOTE_DIR"]
-REMOTE_FILE = "muestra.fasta"
-LOCAL_FILE = "muestra.fasta"
+import toml
+from pathlib import Path
 
 # Custom styles
 st.markdown("""
@@ -63,6 +49,28 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Cargar configuración desde secrets.toml
+def cargar_configuracion():
+    try:
+        config = dict(st.secrets)
+        if config.get('smtp_server'):
+            return config
+    except:
+        try:
+            secrets_path = Path('.streamlit') / 'secrets.toml'
+            with open(secrets_path, 'r') as f:
+                config = toml.load(f)
+            return config
+        except Exception as e:
+            st.error(f"Error al cargar configuración: {e}")
+            st.stop()
+
+config = cargar_configuracion()
+
+# Constants from secrets
+LOCAL_FILE = "muestra.fasta"
+REMOTE_FILE = "muestra.fasta"
+
 def classify_sequence(sequence):
     cpp_keywords = ["CPP"]
     ncpp_keywords = ["NCPP"]
@@ -89,9 +97,9 @@ def send_email_with_results(user_name, user_email):
             file_content_fasta = f.read()
 
         message = MIMEMultipart()
-        message['From'] = EMAIL_USER
+        message['From'] = config['email_user']
         message['To'] = user_email
-        message['Cc'] = NOTIFICATION_EMAIL
+        message['Cc'] = config['notification_email']
         message['Subject'] = "Processed Results from Remote Server"
 
         body = f"""Dear {user_name},
@@ -113,9 +121,9 @@ Protein Analysis Team"""
         attachment_fasta.add_header('Content-Disposition', 'attachment', filename='muestra.fasta')
         message.attach(attachment_fasta)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(config['smtp_server'], config['smtp_port']) as server:
             server.starttls()
-            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.login(config['email_user'], config['email_password'])
             server.send_message(message)
         st.success("Result file sent to the user successfully.")
 
@@ -126,17 +134,22 @@ def upload_and_execute_on_remote(user_name, user_email):
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(REMOTE_HOST, username=REMOTE_USER, password=REMOTE_PASSWORD, port=REMOTE_PORT)
+        ssh.connect(
+            hostname=config['remote_host'],
+            username=config['remote_user'],
+            password=config['remote_password'],
+            port=config['remote_port']
+        )
 
         sftp = ssh.open_sftp()
-        sftp.put(LOCAL_FILE, os.path.join(REMOTE_DIR, REMOTE_FILE))
+        sftp.put(LOCAL_FILE, os.path.join(config['remote_dir'], REMOTE_FILE))
         st.success("File uploaded to the remote server successfully.")
 
-        stdin, stdout, stderr = ssh.exec_command(f"cd {REMOTE_DIR} && bash ejecucion.sh")
+        stdin, stdout, stderr = ssh.exec_command(f"cd {config['remote_dir']} && bash ejecucion.sh")
         stdout.channel.recv_exit_status()
         st.success("Remote script executed successfully.")
 
-        sftp.get(os.path.join(REMOTE_DIR, "totales.txt"), "totales.txt")
+        sftp.get(os.path.join(config['remote_dir'], "totales.txt"), "totales.txt")
         st.success("Result file downloaded from the remote server successfully.")
 
         sftp.close()
@@ -177,4 +190,3 @@ st.markdown("""
         &copy; All rights reserved by Carlos Polanco. Mexico City, Mexico. Contact: polanco@unam.mx.
     </div>
 """, unsafe_allow_html=True)
-
