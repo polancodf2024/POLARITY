@@ -2,11 +2,9 @@ import streamlit as st
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
-import cv2
 import matplotlib.pyplot as plt
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import io
-import time
 
 # Configurar la página de Streamlit
 st.set_page_config(
@@ -90,25 +88,57 @@ class NumberRecognizer:
         return self.model, True
     
     def preprocess_image(self, image):
-        """Preprocesa la imagen para el modelo"""
+        """Preprocesa la imagen para el modelo usando PIL"""
         # Convertir a escala de grises si es necesario
-        if len(image.shape) == 3:
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        if image.mode != 'L':
+            image = image.convert('L')
         
         # Invertir colores si es necesario (fondo blanco, número negro)
-        if np.mean(image) > 127:
-            image = 255 - image
+        image_array = np.array(image)
+        if np.mean(image_array) > 127:
+            image = ImageOps.invert(image)
         
         # Redimensionar a 28x28 (tamaño MNIST)
-        image = cv2.resize(image, (28, 28))
+        image = image.resize((28, 28), Image.Resampling.LANCZOS)
         
-        # Normalizar
-        image = image.astype('float32') / 255.0
+        # Convertir a array y normalizar
+        image_array = np.array(image).astype('float32') / 255.0
         
         # Preparar para el modelo
-        image = image.reshape(1, 28, 28, 1)
+        image_array = image_array.reshape(1, 28, 28, 1)
         
-        return image
+        return image_array
+    
+    def preprocess_image_advanced(self, image):
+        """Preprocesamiento más avanzado para mejorar el reconocimiento"""
+        # Convertir a escala de grises
+        if image.mode != 'L':
+            image = image.convert('L')
+        
+        # Aplicar filtro para suavizar
+        image = image.filter(ImageFilter.SMOOTH)
+        
+        # Convertir a array numpy
+        img_array = np.array(image)
+        
+        # Invertir si el fondo es blanco
+        if np.mean(img_array) > 127:
+            img_array = 255 - img_array
+        
+        # Normalizar y ajustar contraste
+        img_array = img_array.astype('float32')
+        if img_array.max() > 0:
+            img_array = (img_array - img_array.min()) / (img_array.max() - img_array.min())
+        
+        # Redimensionar
+        img_pil = Image.fromarray((img_array * 255).astype('uint8'))
+        img_pil = img_pil.resize((28, 28), Image.Resampling.LANCZOS)
+        
+        # Convertir de nuevo a array
+        final_array = np.array(img_pil).astype('float32') / 255.0
+        final_array = final_array.reshape(1, 28, 28, 1)
+        
+        return final_array
     
     def predict_number(self, image):
         """Predice el número en la imagen"""
@@ -116,7 +146,7 @@ class NumberRecognizer:
             raise ValueError("El modelo no está entrenado")
         
         # Preprocesar imagen
-        processed_image = self.preprocess_image(image)
+        processed_image = self.preprocess_image_advanced(image)
         
         # Predecir
         prediction = self.model.predict(processed_image, verbose=0)
@@ -125,63 +155,67 @@ class NumberRecognizer:
         
         return predicted_number, confidence, prediction[0]
     
-    def predict_multiple_numbers(self, image):
-        """Detecta y reconoce múltiples números en una imagen"""
+    def find_numbers_in_image(self, image):
+        """Encuentra números en diferentes regiones de la imagen"""
         if not self.is_trained:
             raise ValueError("El modelo no está entrenado")
         
         # Convertir a escala de grises
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        if image.mode != 'L':
+            gray_image = image.convert('L')
         else:
-            gray = image.copy()
+            gray_image = image.copy()
         
-        # Preprocesar para detección de contornos
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged = cv2.Canny(blurred, 50, 150)
+        # Crear una copia para dibujar resultados
+        result_image = image.convert('RGB')
         
-        # Encontrar contornos
-        contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Dividir la imagen en regiones para buscar números
+        img_width, img_height = gray_image.size
+        numbers_found = []
         
-        numbers = []
-        result_image = image.copy()
+        # Probar diferentes tamaños de regiones
+        region_sizes = [min(img_width, img_height) // 2, min(img_width, img_height) // 3]
         
-        for contour in contours:
-            # Obtener rectángulo del contorno
-            x, y, w, h = cv2.boundingRect(contour)
-            
-            # Filtrar contornos muy pequeños
-            if w > 20 and h > 20:
-                # Extraer ROI (Region of Interest)
-                roi = gray[y:y+h, x:x+w]
-                
-                # Preprocesar ROI
-                if np.mean(roi) > 127:
-                    roi = 255 - roi
-                
-                roi = cv2.resize(roi, (28, 28))
-                roi = roi.astype('float32') / 255.0
-                roi = roi.reshape(1, 28, 28, 1)
-                
-                # Predecir
-                prediction = self.model.predict(roi, verbose=0)
-                number = np.argmax(prediction)
-                confidence = np.max(prediction)
-                
-                if confidence > 0.5:  # Solo considerar predicciones confiables
-                    numbers.append({
-                        'number': number,
-                        'confidence': confidence,
-                        'position': (x, y, w, h),
-                        'predictions': prediction[0]
-                    })
+        for region_size in region_sizes:
+            for y in range(0, img_height, region_size // 2):
+                for x in range(0, img_width, region_size // 2):
+                    # Extraer región
+                    region = gray_image.crop((
+                        max(0, x),
+                        max(0, y),
+                        min(img_width, x + region_size),
+                        min(img_height, y + region_size)
+                    ))
                     
-                    # Dibujar rectángulo y texto en la imagen original
-                    cv2.rectangle(result_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(result_image, f'{number} ({confidence:.2f})', 
-                               (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    # Verificar si la región tiene contenido
+                    region_array = np.array(region)
+                    if np.std(region_array) > 20:  # Si hay variación (posible número)
+                        try:
+                            number, confidence, _ = self.predict_number(region)
+                            if confidence > 0.5:
+                                numbers_found.append({
+                                    'number': number,
+                                    'confidence': confidence,
+                                    'position': (x, y, region_size, region_size),
+                                    'region': region
+                                })
+                        except:
+                            continue
         
-        return numbers, result_image
+        # Eliminar duplicados
+        unique_numbers = []
+        for num in numbers_found:
+            is_duplicate = False
+            for unique in unique_numbers:
+                dist = np.sqrt((num['position'][0] - unique['position'][0])**2 + 
+                              (num['position'][1] - unique['position'][1])**2)
+                if dist < 50 and num['number'] == unique['number']:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_numbers.append(num)
+        
+        return unique_numbers
 
 def main():
     # Título de la aplicación
@@ -202,7 +236,7 @@ def main():
     st.sidebar.title("Configuración")
     recognition_mode = st.sidebar.radio(
         "Modo de reconocimiento:",
-        ["Reconocimiento Simple", "Detección Múltiple"]
+        ["Reconocimiento Simple", "Búsqueda en Regiones"]
     )
     
     confidence_threshold = st.sidebar.slider(
@@ -227,9 +261,7 @@ def main():
         
         with col1:
             st.subheader("Imagen Original")
-            # Convertir a array de numpy
             image = Image.open(uploaded_file)
-            image_array = np.array(image)
             st.image(image, caption="Imagen subida", use_column_width=True)
         
         with col2:
@@ -238,7 +270,7 @@ def main():
             if recognition_mode == "Reconocimiento Simple":
                 try:
                     with st.spinner('Reconociendo número...'):
-                        number, confidence, all_predictions = recognizer.predict_number(image_array)
+                        number, confidence, all_predictions = recognizer.predict_number(image)
                     
                     if confidence >= confidence_threshold:
                         st.success(f"**Número reconocido: {number}**")
@@ -266,21 +298,18 @@ def main():
                 except Exception as e:
                     st.error(f"Error en el reconocimiento: {str(e)}")
             
-            else:  # Detección Múltiple
+            else:  # Búsqueda en Regiones
                 try:
-                    with st.spinner('Buscando y reconociendo números...'):
-                        numbers, result_image = recognizer.predict_multiple_numbers(image_array)
+                    with st.spinner('Buscando números en la imagen...'):
+                        numbers_found = recognizer.find_numbers_in_image(image)
                     
-                    if numbers:
-                        st.success(f"✅ Se encontraron {len(numbers)} número(s)")
-                        
-                        # Mostrar imagen con detecciones
-                        st.image(result_image, caption="Detecciones", use_column_width=True)
+                    if numbers_found:
+                        st.success(f"✅ Se encontraron {len(numbers_found)} número(s)")
                         
                         # Mostrar resultados en tabla
                         st.subheader("📊 Resultados Detallados")
                         results_data = []
-                        for i, num_info in enumerate(numbers, 1):
+                        for i, num_info in enumerate(numbers_found, 1):
                             if num_info['confidence'] >= confidence_threshold:
                                 results_data.append({
                                     'Número': num_info['number'],
@@ -290,6 +319,18 @@ def main():
                         
                         if results_data:
                             st.table(results_data)
+                            
+                            # Mostrar regiones encontradas
+                            st.subheader("🔍 Regiones Encontradas")
+                            cols = st.columns(3)
+                            for i, num_info in enumerate(numbers_found):
+                                if num_info['confidence'] >= confidence_threshold:
+                                    with cols[i % 3]:
+                                        st.image(
+                                            num_info['region'], 
+                                            caption=f'Número: {num_info["number"]} (Conf: {num_info["confidence"]:.2f})',
+                                            use_column_width=True
+                                        )
                         else:
                             st.warning("No se encontraron números con confianza suficiente.")
                             
@@ -297,7 +338,7 @@ def main():
                         st.warning("No se detectaron números en la imagen.")
                         
                 except Exception as e:
-                    st.error(f"Error en la detección múltiple: {str(e)}")
+                    st.error(f"Error en la búsqueda: {str(e)}")
     
     # Información adicional
     with st.expander("💡 Consejos para mejores resultados"):
@@ -307,6 +348,7 @@ def main():
         - **Números centrados**: Un número por imagen para reconocimiento simple
         - **Tamaño adecuado**: Los números deben ser visibles y claros
         - **Formato**: JPG o PNG recomendados
+        - **Para mejores resultados**: Recorta la imagen para que cada número esté centrado
         """)
     
     with st.expander("📊 Información del Modelo"):
@@ -315,6 +357,7 @@ def main():
         - **Dataset**: MNIST (70,000 imágenes de números escritos a mano)
         - **Precisión**: >98% en el dataset de prueba
         - **Entrada**: Imágenes 28x28 píxeles en escala de grises
+        - **Tecnología**: TensorFlow/Keras
         """)
 
 if __name__ == "__main__":
